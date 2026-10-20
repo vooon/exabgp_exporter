@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gizmoguy/exabgp_exporter/pkg/exabgp/messages/text"
 	"github.com/prometheus/client_golang/prometheus"
@@ -22,8 +23,20 @@ var (
 type StandaloneExporter struct {
 	ExaBGPCLI  string
 	ExaBGPRoot string
-	mutex      sync.RWMutex
+	// CacheTTL is how long the exabgpcli output is reused by later scrapes; 0 disables caching.
+	CacheTTL time.Duration
+	mutex    sync.RWMutex
+	cache    cliOutput
 	BaseExporter
+}
+
+// cliOutput is the result of one exabgpcli round: the neighbor summary and the adj-rib.
+type cliOutput struct {
+	at         time.Time
+	summary    []byte
+	summaryErr error
+	rib        []byte
+	ribErr     error
 }
 
 // NewStandaloneExporter returns an initialized TextExporter.
@@ -118,7 +131,8 @@ func (e *StandaloneExporter) scrape(ch chan<- prometheus.Metric) ([]*text.RIBMes
 	var ns []*text.NeighborSummary
 	var rs []*text.RIBMessage
 
-	res, err := e.getSummary()
+	out := e.cliOutputs()
+	res, err := out.summary, out.summaryErr
 	if err != nil {
 		e.BaseExporter.setExabgpStatus(ch, 0)
 		e.BaseExporter.parseFailures.Inc()
@@ -130,7 +144,7 @@ func (e *StandaloneExporter) scrape(ch chan<- prometheus.Metric) ([]*text.RIBMes
 		e.BaseExporter.parseFailures.Inc()
 		return rs, ns, err
 	}
-	ribres, riberr := e.getRIB()
+	ribres, riberr := out.rib, out.ribErr
 	if riberr != nil {
 		e.BaseExporter.setExabgpStatus(ch, 0)
 		e.BaseExporter.parseFailures.Inc()
@@ -142,6 +156,23 @@ func (e *StandaloneExporter) scrape(ch chan<- prometheus.Metric) ([]*text.RIBMes
 		return rs, ns, ribserr
 	}
 	return ribs, status, nil
+}
+
+// cliOutputs runs exabgpcli or, within CacheTTL of the previous run, returns its output.
+// Collect holds the mutex, so concurrent scrapes wait for one run and share it.
+func (e *StandaloneExporter) cliOutputs() cliOutput {
+	if e.CacheTTL > 0 && !e.cache.at.IsZero() && time.Since(e.cache.at) < e.CacheTTL {
+		return e.cache
+	}
+	out := cliOutput{at: time.Now()}
+	out.summary, out.summaryErr = e.getSummary()
+	if out.summaryErr == nil {
+		out.rib, out.ribErr = e.getRIB()
+	}
+	if e.CacheTTL > 0 {
+		e.cache = out
+	}
+	return out
 }
 
 func (e *StandaloneExporter) getSummary() ([]byte, error) {

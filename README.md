@@ -21,6 +21,8 @@ The exporter can run in two modes:
 
 This is the default mode. Each scrape invokes `exabgpcli` twice - once to gather the outbound rib and again to get neighbor status
 
+`--exabgp.cache-ttl=10s` reuses that output for every scrape within 10 seconds, so several Prometheus servers scraping the same host share one `exabgpcli` round. The default `0s` keeps calling `exabgpcli` on every scrape.
+
 ### stream
 
 The exporter reads from stdin. This mode is appropriate for embedding inside the exabgp process itself as a `processs` definition

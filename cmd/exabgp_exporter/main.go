@@ -28,6 +28,7 @@ func main() {
 		shellCmd      = kingpin.Command("standalone", "run in standalone mode (calls exabgpcli on each scrape)").Default()
 		exabgpcmd     = shellCmd.Flag("exabgp.cli.command", "exabgpcli command").Default(exaBGPCLICommand).String()
 		exabgproot    = shellCmd.Flag("exabgp.root", "value of --root to be passed to exabgpcli").Default(exaBGPCLIRoot).String()
+		cacheTTL      = shellCmd.Flag("exabgp.cache-ttl", "reuse exabgpcli output for scrapes within this duration (0 disables caching)").Default("0s").Duration()
 		listenAddress = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9576").String()
 		metricsPath   = kingpin.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
 	)
@@ -49,6 +50,7 @@ func main() {
 			"mode", "standalone",
 			"args", *exabgpcmd,
 			"root", *exabgproot,
+			"cache_ttl", cacheTTL.String(),
 			"buildcontext", version.BuildContext(),
 		)
 		e, err := exporter.NewStandaloneExporter(*exabgpcmd, *exabgproot, logger)
@@ -56,6 +58,7 @@ func main() {
 			logger.Error("Error creating standalone exporter", "error", err.Error())
 			os.Exit(1)
 		}
+		e.CacheTTL = *cacheTTL
 		prometheus.MustRegister(e)
 		prometheus.MustRegister(versioncollector.NewCollector("exabgp_exporter"))
 	case "stream":
